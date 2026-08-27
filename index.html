@@ -819,7 +819,21 @@ function worstCell(){
   return worst;
 }
 
-function setView(v){
+/* ---------- Microsoft Clarity — tags e eventos customizados ----------
+   window.clarity já existe de forma segura desde o snippet no <head>
+   (mesmo antes do script externo carregar), então essas chamadas nunca
+   quebram a página — só ficam sem efeito se o Clarity estiver bloqueado. */
+function clarityTag(key, value){
+  try { if (typeof clarity === 'function') clarity('set', key, value); } catch(e){}
+}
+function clarityEvent(name){
+  try { if (typeof clarity === 'function') clarity('event', name); } catch(e){}
+}
+
+/* Cada visão ganha sua própria URL (#exec, #geral, #roadmap) via hash — não recarrega
+   a página nem exige arquivos separados, mas dá ao Clarity (e ao histórico do navegador)
+   uma URL distinta por visão, necessária para o recurso de Mapas de Calor por página. */
+function setView(v, fromHash){
   document.getElementById('view-exec').classList.toggle('active', v==='exec');
   document.getElementById('view-geral').classList.toggle('active', v==='geral');
   document.getElementById('view-roadmap').classList.toggle('active', v==='roadmap');
@@ -827,7 +841,17 @@ function setView(v){
   document.getElementById('tabGeralBtn').classList.toggle('active', v==='geral');
   document.getElementById('tabRoadmapBtn').classList.toggle('active', v==='roadmap');
   if (v==='geral') renderGeral();
+  clarityTag('visao_ativa', v);
+  clarityEvent('troca_visao_' + v);
+  if (!fromHash && location.hash.replace('#','') !== v){
+    location.hash = v;
+  }
 }
+window.addEventListener('hashchange', () => {
+  if (!currentUser) return; // ignora mudanças de hash antes do login
+  const v = (location.hash || '').replace('#','');
+  if (VIEW_TAB_MAP[v] && currentUser.allowedViews.includes(v)) setView(v, true);
+});
 function openExecDimension(productId, dimKey){
   execState.product = productId;
   execState.modulo = 'all';
@@ -840,6 +864,7 @@ function openExecDimension(productId, dimKey){
   renderExecDetail();
   const anchor = document.getElementById('execDetailAnchor');
   if (anchor) anchor.scrollIntoView({behavior:'smooth', block:'start'});
+  clarityEvent('drilldown_dimensao_' + dimKey);
 }
 
 /* ---------- Cards por produto ---------- */
@@ -1291,12 +1316,15 @@ function attemptLogin(){
   if (!user || user.password !== pass){
     errEl.textContent = 'E-mail ou senha inválidos.';
     errEl.style.display = 'block';
+    clarityEvent('login_falhou');
     return;
   }
   errEl.style.display = 'none';
   currentUser = Object.assign({email}, user);
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
+  clarityTag('perfil', currentUser.name);
+  clarityEvent('login_realizado');
   applyAccessControl();
 }
 function applyAccessControl(){
@@ -1305,9 +1333,16 @@ function applyAccessControl(){
     document.getElementById(VIEW_TAB_MAP[v]).style.display = allowed.includes(v) ? 'flex' : 'none';
   });
   document.getElementById('userBadge').textContent = currentUser.name;
-  setView(allowed[0]);
+  // Se a pessoa chegou com um link direto para uma visão (ex.: .../index.html#roadmap)
+  // e o perfil tem acesso a ela, abre já naquela visão; senão, cai na primeira permitida.
+  const hashView = (location.hash || '').replace('#','');
+  const initialView = (VIEW_TAB_MAP[hashView] && allowed.includes(hashView)) ? hashView : allowed[0];
+  setView(initialView);
 }
 function logout(){
+  location.hash = '';
+  clarityEvent('logout');
+  clarityTag('perfil', '');
   currentUser = null;
   document.getElementById('loginEmail').value = '';
   document.getElementById('loginPass').value = '';
